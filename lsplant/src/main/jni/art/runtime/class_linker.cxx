@@ -39,69 +39,15 @@ private:
     inline static auto GetRuntimeQuickGenericJniStub_=
             "_ZNK3art11ClassLinker29GetRuntimeQuickGenericJniStubEv"_sym.as<void *(ClassLinker::*)()>;
 
+    // [ScllQk] MayGetBackup simplified — original used IsHooked() which referenced removed hooks
     inline static art::ArtMethod *MayGetBackup(art::ArtMethod *method) {
-        if (auto backup = IsHooked(method); backup) [[unlikely]] {
-            method = backup;
-            LOGV("propagate native method: %s", method->PrettyMethod(true).data());
-        }
         return method;
     }
 
-    inline static auto RegisterNativeThread_ =
-        "_ZN3art6mirror9ArtMethod14RegisterNativeEPNS_6ThreadEPKvb"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, ArtMethod *method, Thread *thread, const void *native_method, bool is_fast) static -> void {
-            return backup(thiz, MayGetBackup(method), thread, native_method, is_fast);
-        };
-
-    inline static auto UnregisterNativeThread_ =
-        "_ZN3art6mirror9ArtMethod16UnregisterNativeEPNS_6ThreadE"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, ArtMethod *method, Thread *thread) static -> void {
-            return backup(thiz, MayGetBackup(method), thread);
-        };
-
-    inline static auto RegisterNativeFast_ =
-        "_ZN3art9ArtMethod14RegisterNativeEPKvb"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, ArtMethod *method, const void *native_method, bool is_fast) static -> void {
-            return backup(thiz, MayGetBackup(method), native_method, is_fast);
-        };
-
-    inline static auto UnregisterNativeFast_ =
-        "_ZN3art9ArtMethod16UnregisterNativeEv"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, ArtMethod *method) static -> void{
-            return backup(thiz, MayGetBackup(method));
-        };
-
-    inline static auto RegisterNative_ =
-        "_ZN3art9ArtMethod14RegisterNativeEPKv"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, ArtMethod *method, const void *native_method) static -> const void * {
-            return backup(thiz, MayGetBackup(method), native_method);
-        };
-
-    inline static auto UnregisterNative_ =
-        "_ZN3art9ArtMethod16UnregisterNativeEv"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, ArtMethod *method) static -> const void * {
-            return backup(thiz, MayGetBackup(method));
-        };
-
-    inline static auto RegisterNativeClassLinker_ =
-        "_ZN3art11ClassLinker14RegisterNativeEPNS_6ThreadEPNS_9ArtMethodEPKv"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, Thread *self, ArtMethod *method, const void *native_method) static -> const void *{
-            return backup(thiz, self, MayGetBackup(method), native_method);
-        };
-
-    inline static auto UnregisterNativeClassLinker_ =
-        "_ZN3art11ClassLinker16UnregisterNativeEPNS_6ThreadEPNS_9ArtMethodE"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, Thread *self, ArtMethod *method) static -> const void * {
-            return backup(thiz, self, MayGetBackup(method));
-        };
+    // [ScllQk] 10 hook declarations removed (RegisterNative/UnregisterNative/FixupStaticTrampolines)
+    // These contain _ZN3art* strings that加固 apps scan for hooking detection.
+    // Remaining hooks: SetEntryPointsToInterpreter_, ShouldUseInterpreterEntrypoint_,
+    // GetOptimizedCodeFor_, AdjustThreadVisibilityCounter_, MarkVisiblyInitialized_
 
     static void RestoreBackup(const dex::ClassDef *class_def, art::Thread *self) {
         auto methods = mirror::Class::PopBackup(class_def, self);
@@ -125,29 +71,7 @@ private:
         }
     }
 
-    inline static auto FixupStaticTrampolines_ =
-        "_ZN3art11ClassLinker22FixupStaticTrampolinesENS_6ObjPtrINS_6mirror5ClassEEE"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, ObjPtr<mirror::Class> mirror_class) static -> void {
-            backup(thiz, mirror_class);
-            RestoreBackup(mirror_class->GetClassDef(), nullptr);
-        };
-
-    inline static auto FixupStaticTrampolinesWithThread_ =
-        "_ZN3art11ClassLinker22FixupStaticTrampolinesEPNS_6ThreadENS_6ObjPtrINS_6mirror5ClassEEE"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, Thread *self, ObjPtr<mirror::Class> mirror_class) static -> void {
-            backup(thiz, self, mirror_class);
-            RestoreBackup(mirror_class->GetClassDef(), self);
-        };
-
-    inline static auto FixupStaticTrampolinesRaw_ =
-        "_ZN3art11ClassLinker22FixupStaticTrampolinesEPNS_6mirror5ClassE"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, mirror::Class *mirror_class)static -> void {
-            backup(thiz, mirror_class);
-            RestoreBackup(mirror_class->GetClassDef(), nullptr);
-        };
+    // [ScllQk] FixupStaticTrampolines hooks removed — their _ZN3art* strings leak hooking detection
 
     inline static auto AdjustThreadVisibilityCounter_ =
         ("_ZN3art11ClassLinker26VisiblyInitializedCallback29AdjustThreadVisibilityCounterEPNS_6ThreadEi"_sym |
@@ -174,22 +98,12 @@ public:
             handler(ShouldUseInterpreterEntrypoint_);
         }
 
-        bool method_FixupStaticTrampolines_hooked = handler(FixupStaticTrampolinesWithThread_,
-				FixupStaticTrampolines_, FixupStaticTrampolinesRaw_);
-        if (!method_FixupStaticTrampolines_hooked) LOGD("method FixupStaticTrampolines is inlined");
-
-        if (!handler(RegisterNativeClassLinker_, RegisterNative_, RegisterNativeFast_,
-                          RegisterNativeThread_) ||
-            !handler(UnregisterNativeClassLinker_, UnregisterNative_, UnregisterNativeFast_,
-                          UnregisterNativeThread_)) {
-            return false;
-        }
+        // [ScllQk] RegisterNative/UnregisterNative handler calls removed (symbols deleted above)
+        // Original code returned false if these failed; now unconditionally pass
 
         if (sdk_int >= __ANDROID_API_R__) {
             if constexpr (kArch != Arch::kX86 && kArch != Arch::kX86_64) {
-                if (!handler(AdjustThreadVisibilityCounter_, MarkVisiblyInitialized_) &&
-                    !method_FixupStaticTrampolines_hooked) {
-                    // should hook MarkVisiblyInitialized if FixupStaticTrampolines is inlined
+                if (!handler(AdjustThreadVisibilityCounter_, MarkVisiblyInitialized_)) {
                     LOGW("MarkVisiblyInitialized not hooked");
                 }
             }
